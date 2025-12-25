@@ -486,3 +486,144 @@ async def get_pull_request_files_by_repo_id(repo_id: int, pr_number: int) -> Dic
         "error": None,
         "status_code": 200
     }
+
+
+async def get_commits_by_repo_id(repo_id: int, sha: Optional[str] = None, path: Optional[str] = None, author: Optional[str] = None, since: Optional[str] = None, until: Optional[str] = None, per_page: int = 30, page: int = 1) -> Dict:
+    """
+    根据仓库 ID 获取该仓库的所有提交（commits）
+    
+    Args:
+        repo_id: 仓库 ID（整数）
+        sha: 分支或提交 SHA，默认为默认分支
+        path: 只返回包含指定路径的提交
+        author: 只返回指定作者的提交（GitHub 用户名或邮箱）
+        since: 只返回此日期之后的提交（ISO 8601 格式，如 2024-01-01T00:00:00Z）
+        until: 只返回此日期之前的提交（ISO 8601 格式）
+        per_page: 每页返回数量，默认 30，最大 100
+        page: 页码，默认 1
+    
+    Returns:
+        包含提交数据和状态的字典:
+        {
+            "success": bool,
+            "data": {
+                "repository_id": int,        # 仓库 ID
+                "total": int,                 # 返回的提交数量
+                "commits": [                 # 提交列表
+                    {
+                        "sha": str,          # 提交 SHA
+                        "message": str,      # 提交消息
+                        "author": {
+                            "name": str,
+                            "email": str,
+                            "date": str
+                        },
+                        "committer": {
+                            "name": str,
+                            "email": str,
+                            "date": str
+                        },
+                        "url": str,          # 提交 URL
+                        "html_url": str,     # 提交 HTML URL
+                        "stats": {
+                            "additions": int,
+                            "deletions": int,
+                            "total": int
+                        },
+                        "files": [           # 变更文件列表
+                            {
+                                "filename": str,
+                                "additions": int,
+                                "deletions": int,
+                                "changes": int,
+                                "status": str
+                            }
+                        ]
+                    }
+                ]
+            },
+            "error": str,
+            "status_code": int
+        }
+    """
+    params = {
+        "per_page": per_page,
+        "page": page
+    }
+    
+    if sha:
+        params["sha"] = sha
+    if path:
+        params["path"] = path
+    if author:
+        params["author"] = author
+    if since:
+        params["since"] = since
+    if until:
+        params["until"] = until
+    
+    # 使用仓库 ID 查询提交
+    result = await github_api_request(f"/repositories/{repo_id}/commits", params=params)
+    
+    if not result["success"]:
+        if result["status_code"] == 404:
+            return {
+                "success": False,
+                "error": f"仓库 ID {repo_id} 不存在或无权访问",
+                "status_code": 404,
+                "data": None
+            }
+        return result
+    
+    commits = result["data"]
+    
+    formatted_commits = []
+    for commit in commits:
+        commit_data = commit.get("commit", {})
+        author_info = commit_data.get("author", {})
+        committer_info = commit_data.get("committer", {})
+        
+        formatted_commit = {
+            "sha": commit["sha"],
+            "message": commit_data.get("message", ""),
+            "author": {
+                "name": author_info.get("name", ""),
+                "email": author_info.get("email", ""),
+                "date": author_info.get("date", "")
+            },
+            "committer": {
+                "name": committer_info.get("name", ""),
+                "email": committer_info.get("email", ""),
+                "date": committer_info.get("date", "")
+            },
+            "url": commit.get("url", ""),
+            "html_url": commit.get("html_url", ""),
+            "stats": commit.get("stats", {}),
+            "files": []
+        }
+        
+        # 如果有文件信息，添加到提交中
+        if commit.get("files"):
+            formatted_commit["files"] = [
+                {
+                    "filename": f.get("filename", ""),
+                    "additions": f.get("additions", 0),
+                    "deletions": f.get("deletions", 0),
+                    "changes": f.get("changes", 0),
+                    "status": f.get("status", "")
+                }
+                for f in commit["files"]
+            ]
+        
+        formatted_commits.append(formatted_commit)
+    
+    return {
+        "success": True,
+        "data": {
+            "repository_id": repo_id,
+            "total": len(formatted_commits),
+            "commits": formatted_commits
+        },
+        "error": None,
+        "status_code": 200
+    }

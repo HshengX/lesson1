@@ -3,7 +3,7 @@ from server import search_repository_by_url, get_pull_requests_by_repo_id, get_p
 
 async def main():
     # 1. 搜索仓库获取 ID
-    repo_result = await search_repository_by_url("webgl")
+    repo_result = await search_repository_by_url("lesson")
     if not repo_result["success"]:
         print(f"错误: {repo_result['error']}")
         return

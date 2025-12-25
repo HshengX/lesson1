@@ -1,20 +1,31 @@
 """
 基于 ModelScope 的聊天机器人
 遵循 OpenAI API 兼容规范，支持 ModelScope 云端服务或其他兼容服务
+支持 Function Calling（工具调用）
 """
 import os
-from typing import List, Dict, Optional
+import json
+import asyncio
+from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
 # 加载环境变量
 load_dotenv()
 
+# 导入 GitHub 工具
+try:
+    from github_tools import get_github_tools, call_tool, format_tool_result
+    GITHUB_TOOLS_AVAILABLE = True
+except ImportError:
+    GITHUB_TOOLS_AVAILABLE = False
+    print("[警告] github_tools 模块未找到，Function Calling 功能将不可用")
+
 
 class ChatBot:
     """基于 ModelScope 的聊天机器人类（遵循 OpenAI API 兼容规范）"""
     
-    def __init__(self, api_key: Optional[str] = None, api_base: Optional[str] = None, model: str = "Qwen/Qwen3-235B-A22B"):
+    def __init__(self, api_key: Optional[str] = None, api_base: Optional[str] = None, model: str = "Qwen/Qwen3-235B-A22B", enable_tools: bool = True):
         """
         初始化聊天机器人（基于 ModelScope 或其他兼容 OpenAI API 的服务）
         
@@ -22,6 +33,7 @@ class ChatBot:
             api_key: API Key，如果不提供则从环境变量 OPENAI_API_KEY 读取（必需）
             api_base: API Base URL，如果不提供则从环境变量 OPENAI_API_BASE 读取（必需）
             model: 使用的模型名称，默认为 qwen
+            enable_tools: 是否启用 GitHub 工具（Function Calling），默认 True
         """
         # 从环境变量或参数获取 API Key（必需）
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -50,17 +62,29 @@ class ChatBot:
         self.model = model
         self.conversation_history: List[Dict[str, str]] = []
         
+        # 工具配置
+        self.enable_tools = enable_tools and GITHUB_TOOLS_AVAILABLE
+        if self.enable_tools:
+            self.tools = get_github_tools()
+            print(f"[已启用] GitHub 工具（Function Calling）")
+            print(f"  可用工具: {len(self.tools)} 个")
+        else:
+            self.tools = None
+            if enable_tools and not GITHUB_TOOLS_AVAILABLE:
+                print(f"[警告] GitHub 工具不可用，请确保 github_tools 模块已正确导入")
+        
         # 显示连接信息
         print(f"[已连接] 服务地址: {self.api_base}")
         print(f"[模型] {self.model}")
     
-    def chat(self, user_input: str, stream: bool = False) -> str:
+    def chat(self, user_input: str, stream: bool = False, max_iterations: int = 10) -> str:
         """
-        发送消息并获取回复
+        发送消息并获取回复（支持 Function Calling）
         
         Args:
             user_input: 用户输入的消息
-            stream: 是否使用流式输出，默认为 False
+            stream: 是否使用流式输出，默认为 False（注意：Function Calling 不支持流式输出）
+            max_iterations: Function Calling 最大迭代次数，防止无限循环，默认 10
         
         Returns:
             模型返回的回复内容
@@ -71,99 +95,179 @@ class ChatBot:
             "content": user_input
         })
         
+        # 如果启用了工具且使用流式输出，给出警告
+        if stream and self.enable_tools:
+            print("[警告] Function Calling 不支持流式输出，已自动切换到非流式模式")
+            stream = False
+        
         # 构建消息列表（包含历史对话）
         messages = self.conversation_history.copy()
         
         try:
-            if stream:
-                # 流式输出（兼容 OpenAI API 规范）
-                stream_response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    stream=True
-                )
+            # Function Calling 处理循环
+            iteration = 0
+            while iteration < max_iterations:
+                iteration += 1
                 
-                full_response = ""
-                chunk_count = 0
-                for chunk in stream_response:
-                    chunk_count += 1
-                    if chunk.choices and len(chunk.choices) > 0:
-                        delta = chunk.choices[0].delta
-                        if delta and delta.content is not None:
-                            content = delta.content
-                            full_response += content
-                            try:
-                                print(content, end='', flush=True)
-                            except UnicodeEncodeError:
-                                # Windows 控制台编码问题，使用安全编码方式
-                                import sys
-                                safe_content = content.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
-                                print(safe_content, end='', flush=True)
-                
-                print()  # 换行
-                
-                # 检查是否收到任何响应
-                if not full_response:
-                    error_msg = f"流式输出未收到任何内容（收到 {chunk_count} 个 chunk）"
-                    print(error_msg)
-                    if chunk_count == 0:
-                        print("提示: 可能 API 调用失败或服务未响应")
-                    return error_msg
-                
-                # 将助手回复添加到对话历史
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": full_response
-                })
-                
-                return full_response
-            else:
-                # 非流式输出（兼容 OpenAI API 规范）
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages
-                )
-                
-                # 调试：打印响应结构
-                # print(f"调试: response type = {type(response)}")
-                # print(f"调试: response = {response}")
-                
-                # 兼容性处理：确保响应格式正确
-                if response.choices and len(response.choices) > 0:
-                    assistant_message = response.choices[0].message.content
+                if stream:
+                    # 流式输出（注意：Function Calling 不支持流式输出）
+                    stream_response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        stream=True
+                    )
                     
-                    # 检查响应内容是否为空
+                    full_response = ""
+                    chunk_count = 0
+                    for chunk in stream_response:
+                        chunk_count += 1
+                        if chunk.choices and len(chunk.choices) > 0:
+                            delta = chunk.choices[0].delta
+                            if delta and delta.content is not None:
+                                content = delta.content
+                                full_response += content
+                                try:
+                                    print(content, end='', flush=True)
+                                except UnicodeEncodeError:
+                                    import sys
+                                    safe_content = content.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
+                                    print(safe_content, end='', flush=True)
+                    
+                    print()  # 换行
+                    
+                    if not full_response:
+                        error_msg = f"流式输出未收到任何内容（收到 {chunk_count} 个 chunk）"
+                        print(error_msg)
+                        if chunk_count == 0:
+                            print("提示: 可能 API 调用失败或服务未响应")
+                        return error_msg
+                    
+                    self.conversation_history.append({
+                        "role": "assistant",
+                        "content": full_response
+                    })
+                    
+                    return full_response
+                else:
+                    # 非流式输出（兼容 OpenAI API 规范，支持 Function Calling）
+                    api_kwargs = {
+                        "model": self.model,
+                        "messages": messages
+                    }
+                    
+                    # 如果启用了工具，添加到 API 调用中
+                    if self.enable_tools and self.tools:
+                        api_kwargs["tools"] = self.tools
+                        api_kwargs["tool_choice"] = "auto"
+                    
+                    response = self.client.chat.completions.create(**api_kwargs)
+                    
+                    if not response.choices or len(response.choices) == 0:
+                        error_msg = "API 响应格式不正确：未找到 choices"
+                        print(error_msg)
+                        return error_msg
+                    
+                    message = response.choices[0].message
+                    assistant_message = message.content
+                    tool_calls = message.tool_calls if hasattr(message, 'tool_calls') and message.tool_calls else None
+                    
+                    if tool_calls:
+                        # 处理工具调用
+                        print(f"[工具调用] 检测到 {len(tool_calls)} 个工具调用")
+                        
+                        tool_calls_data = [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            }
+                            for tc in tool_calls
+                        ]
+                        
+                        self.conversation_history.append({
+                            "role": "assistant",
+                            "content": assistant_message,
+                            "tool_calls": tool_calls_data
+                        })
+                        
+                        # 执行所有工具调用
+                        tool_messages = []
+                        for tool_call in tool_calls:
+                            tool_name = tool_call.function.name
+                            tool_args_str = tool_call.function.arguments
+                            
+                            print(f"  - 调用工具: {tool_name}")
+                            
+                            try:
+                                tool_args = json.loads(tool_args_str)
+                                
+                                # 调用异步工具函数
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                except RuntimeError:
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                
+                                tool_result = loop.run_until_complete(call_tool(tool_name, tool_args))
+                                formatted_result = format_tool_result(tool_name, tool_result)
+                                
+                                tool_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "name": tool_name,
+                                    "content": formatted_result
+                                })
+                                
+                                print(f"    [成功] 工具执行完成")
+                                
+                            except json.JSONDecodeError as e:
+                                error_msg = f"工具参数解析失败: {str(e)}"
+                                print(f"    [失败] {error_msg}")
+                                tool_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "name": tool_name,
+                                    "content": error_msg
+                                })
+                            except Exception as e:
+                                error_msg = f"工具执行失败: {str(e)}"
+                                print(f"    [失败] {error_msg}")
+                                tool_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "name": tool_name,
+                                    "content": error_msg
+                                })
+                        
+                        # 将工具执行结果添加到对话历史
+                        self.conversation_history.extend(tool_messages)
+                        
+                        # 继续对话，让模型基于工具结果生成回复
+                        messages = self.conversation_history.copy()
+                        continue
+                    
+                    # 没有工具调用，正常返回回复
                     if assistant_message is None or assistant_message == "":
                         error_msg = "API 返回了空响应"
                         print(error_msg)
-                        print(f"调试信息: response.choices[0] = {response.choices[0]}")
-                        print(f"调试信息: response.choices[0].message = {response.choices[0].message}")
                         return error_msg
                     
-                    # 将助手回复添加到对话历史
                     self.conversation_history.append({
                         "role": "assistant",
                         "content": assistant_message
                     })
                     
-                    # 非流式模式下，打印响应内容（处理 Windows 控制台编码问题）
                     try:
                         print(assistant_message)
                     except UnicodeEncodeError:
-                        # Windows 控制台编码问题，使用安全编码方式
                         import sys
                         safe_message = assistant_message.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
                         print(safe_message)
                     
                     return assistant_message
-                else:
-                    error_msg = "API 响应格式不正确：未找到 choices"
-                    print(error_msg)
-                    print(f"调试信息: response type = {type(response)}")
-                    print(f"调试信息: response = {response}")
-                    if hasattr(response, 'choices'):
-                        print(f"调试信息: response.choices = {response.choices}")
-                    return error_msg
                     
         except Exception as e:
             error_msg = f"调用 API 时发生错误: {str(e)}"
