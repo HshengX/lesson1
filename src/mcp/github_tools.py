@@ -4,6 +4,7 @@ GitHub API 工具定义（遵循 OpenAI Function Calling 规范）
 """
 from typing import Dict, List, Any
 import asyncio
+from datetime import datetime
 from ..github.server import (
     search_repository_by_url,
     get_pull_requests_by_repo_id,
@@ -223,6 +224,46 @@ async def call_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]
         }
 
 
+def format_datetime(iso_string: str) -> str:
+    """
+    将 ISO 8601 格式的日期时间字符串转换为本地时间显示
+    
+    Args:
+        iso_string: ISO 8601 格式的日期时间字符串（如 "2025-12-25T16:00:00Z"）
+    
+    Returns:
+        格式化后的日期时间字符串，包含 UTC 和本地时间
+    """
+    try:
+        # 解析 ISO 8601 格式的日期时间
+        if iso_string.endswith('Z'):
+            # UTC 时间
+            dt_utc = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+        elif '+' in iso_string or iso_string.count('-') > 2:
+            # 包含时区信息
+            dt_utc = datetime.fromisoformat(iso_string.replace('Z', '+00:00'))
+        else:
+            # 假设是 UTC 时间
+            dt_utc = datetime.fromisoformat(iso_string + '+00:00')
+        
+        # 转换为本地时间
+        dt_local = dt_utc.astimezone()
+        
+        # 格式化显示
+        utc_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+        local_str = dt_local.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 如果本地时间和 UTC 时间在同一天，只显示本地时间
+        if dt_utc.date() == dt_local.date():
+            return f"{local_str} (本地时间，UTC: {utc_str})"
+        else:
+            # 日期不同，突出显示本地日期
+            return f"{local_str} (本地时间，UTC: {utc_str})"
+    except Exception as e:
+        # 如果解析失败，返回原始字符串
+        return iso_string
+
+
 def format_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
     """
     将工具执行结果格式化为字符串，便于大模型理解
@@ -273,11 +314,14 @@ def format_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         summary = f"仓库 ID {repo_id} 的 {state} 状态 Pull Requests（共 {total} 个）：\n\n"
         for pr in prs[:20]:  # 只显示前20个
             summary += f"PR #{pr['number']}: {pr['title']}\n"
-            summary += f"   状态: {pr['state']}, 创建时间: {pr['created_at']}\n"
+            # 格式化日期时间
+            created_at = format_datetime(pr['created_at'])
+            summary += f"   状态: {pr['state']}, 创建时间: {created_at}\n"
             summary += f"   作者: {pr['user']['login']}\n"
             summary += f"   URL: {pr['url']}\n"
-            if pr.get('merged'):
-                summary += f"   已合并于: {pr.get('merged_at', '未知')}\n"
+            if pr.get('merged') and pr.get('merged_at'):
+                merged_at = format_datetime(pr['merged_at'])
+                summary += f"   已合并于: {merged_at}\n"
             summary += "\n"
         
         if total > 20:
@@ -327,7 +371,9 @@ def format_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         for commit in commits[:30]:  # 只显示前30个
             summary += f"提交: {commit['sha'][:7]} - {commit['message'].split(chr(10))[0]}\n"
             summary += f"   作者: {commit['author']['name']} ({commit['author']['email']})\n"
-            summary += f"   时间: {commit['author']['date']}\n"
+            # 格式化日期时间，显示本地时间
+            date_str = format_datetime(commit['author']['date'])
+            summary += f"   时间: {date_str}\n"
             if commit.get('stats'):
                 stats = commit['stats']
                 summary += f"   变更: +{stats.get('additions', 0)} -{stats.get('deletions', 0)} ({stats.get('total', 0)} 行)\n"
