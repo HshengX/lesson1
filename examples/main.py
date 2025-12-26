@@ -1,5 +1,12 @@
 import asyncio
-from server import search_repository_by_url, get_pull_requests_by_repo_id, get_pull_request_files_by_repo_id
+import sys
+from pathlib import Path
+
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.github.server import search_repository_by_url, get_pull_requests_by_repo_id, get_pull_request_files_by_repo_id
 
 async def main():
     # 1. 搜索仓库获取 ID

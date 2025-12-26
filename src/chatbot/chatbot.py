@@ -15,7 +15,7 @@ load_dotenv()
 
 # 导入 GitHub 工具
 try:
-    from github_tools import get_github_tools, call_tool, format_tool_result
+    from ..mcp.github_tools import get_github_tools, call_tool, format_tool_result
     GITHUB_TOOLS_AVAILABLE = True
 except ImportError:
     GITHUB_TOOLS_AVAILABLE = False

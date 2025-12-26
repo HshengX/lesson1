@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "gitcode": {
+      "command": "python",
+      "args": [
+        "D:\\ai\\aiproject\\gf-aiproject\\gfMcpCourse\\lesson1\\src\\mcp\\gitcode_mcp.py"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "",
+        "GITHUB_USERNAME": ""
+      }
+    }
+  }
+}
+

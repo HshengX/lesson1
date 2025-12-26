@@ -8,7 +8,14 @@ import asyncio
 from typing import List, Dict, Optional, Any
 from dotenv import load_dotenv
 from openai import OpenAI
-from github_tools import get_github_tools, call_tool, format_tool_result
+import sys
+from pathlib import Path
+
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.mcp.github_tools import get_github_tools, call_tool, format_tool_result
 
 # 加载环境变量
 load_dotenv()

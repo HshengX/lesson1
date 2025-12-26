@@ -4,7 +4,7 @@ GitHub API 工具定义（遵循 OpenAI Function Calling 规范）
 """
 from typing import Dict, List, Any
 import asyncio
-from server import (
+from ..github.server import (
     search_repository_by_url,
     get_pull_requests_by_repo_id,
     get_pull_request_files_by_repo_id,
@@ -24,7 +24,7 @@ def get_github_tools() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_repository_by_url",
-                "description": "搜索GitHub仓库。当用户询问仓库信息、查找仓库、需要仓库ID时使用此工具。支持完整URL、简短格式(owner/repo)或仓库名称进行搜索。如果设置了GITHUB_USERNAME，模糊搜索时只搜索该用户的仓库。返回的仓库信息包含仓库ID，可用于后续查询。",
+                "description": "搜索GitHub仓库。当用户询问任何GitHub仓库相关信息时，首先使用此工具查找仓库并获取仓库ID。支持完整URL、简短格式(owner/repo)或仓库名称进行搜索。如果设置了GITHUB_USERNAME，模糊搜索时只搜索该用户的仓库。返回的仓库信息包含仓库ID，这是查询仓库提交、PR等信息的必需参数。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -312,6 +312,35 @@ def format_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         
         if total_files > 15:
             summary += f"... 还有 {total_files - 15} 个文件未显示\n"
+        
+        return summary
+    
+    elif tool_name == "get_commits_by_repo_id":
+        commits = data.get("commits", [])
+        total = data.get("total", 0)
+        repo_id = data.get("repository_id", "")
+        
+        if not commits:
+            return f"仓库 ID {repo_id} 没有提交记录"
+        
+        summary = f"仓库 ID {repo_id} 的提交历史（共 {total} 个）：\n\n"
+        for commit in commits[:30]:  # 只显示前30个
+            summary += f"提交: {commit['sha'][:7]} - {commit['message'].split(chr(10))[0]}\n"
+            summary += f"   作者: {commit['author']['name']} ({commit['author']['email']})\n"
+            summary += f"   时间: {commit['author']['date']}\n"
+            if commit.get('stats'):
+                stats = commit['stats']
+                summary += f"   变更: +{stats.get('additions', 0)} -{stats.get('deletions', 0)} ({stats.get('total', 0)} 行)\n"
+            summary += f"   URL: {commit.get('html_url', commit.get('url', ''))}\n"
+            if commit.get('files'):
+                summary += f"   文件: {', '.join([f['filename'] for f in commit['files'][:5]])}"
+                if len(commit['files']) > 5:
+                    summary += f" ... 等 {len(commit['files'])} 个文件"
+                summary += "\n"
+            summary += "\n"
+        
+        if total > 30:
+            summary += f"... 还有 {total - 30} 个提交未显示\n"
         
         return summary
     
